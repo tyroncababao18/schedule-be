@@ -6,6 +6,9 @@ const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
+app.get("/health", (req, res) => res.json({ ok: true }));
+
+
 setupMiddleware(app);
 
 

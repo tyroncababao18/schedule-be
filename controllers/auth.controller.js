@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const db = require("../db/knex");
+const db = require("../db/knex.js");
 
 exports.login = async (req, res, next) => {
     try {
@@ -21,6 +21,7 @@ exports.login = async (req, res, next) => {
             process.env.JWT_SECRET,
             { expiresIn: "8h" }
         );
+
         res.json({
             token,
             user: {
@@ -31,6 +32,7 @@ exports.login = async (req, res, next) => {
             },
         });
     } catch (err) {
+        console.log(err)
         next(err);
     }
 };

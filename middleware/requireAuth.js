@@ -8,7 +8,7 @@ module.exports = function requireAuth(req, res, next) {
     if (!token) return res.status(401).json({ message: "Missing token" });
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // { sub: userId, email }
+    req.user = decoded;
     return next();
   } catch (err) {
     return res.status(401).json({ message: "Invalid or expired token" });
