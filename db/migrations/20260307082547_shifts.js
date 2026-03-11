@@ -26,6 +26,22 @@ exports.up = function (knex) {
       .inTable("users")
       .onDelete("RESTRICT");
     tb
+      .integer("schedule_week_id")
+      .unsigned()
+      .references("id")
+      .inTable("schedule_weeks")
+      .onDelete("SET NULL");
+
+    tb
+      .integer("user_id")
+      .unsigned()
+      .references("id")
+      .inTable("users")
+      .onDelete("CASCADE");
+    tb.index(["user_id"]);
+    tb.unique(["store_id", "user_id", "shift_date"]);
+    tb.index(["schedule_week_id"]);
+    tb
       .enu("status", ["draft", "published", "canceled"])
       .notNullable()
       .defaultTo("draft");

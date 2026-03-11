@@ -1,87 +1,342 @@
+// controllers/shifts.controller.js
 const db = require("../db/knex");
 
+/**
+ * Rules:
+ * - Shift.status is ALWAYS forced from schedule_weeks (draft/published). Frontend must not set it.
+ * - No edits/creates/deletes for past days.
+ * - Allowed window: current week + next 3 weeks (offset 0..3). Change EDITABLE_WEEKS_AHEAD if needed.
+ * - Department must be allowed for the shift's user based on user_assignments (unless user_id is null/unassigned).
+ * - Option A: one shift = one associate (shifts.user_id).
+ */
+
+function toDateKey(val) {
+  if (!val) return null;
+
+  // Date object from PG
+  if (val instanceof Date) {
+    const yyyy = val.getFullYear();
+    const mm = String(val.getMonth() + 1).padStart(2, "0");
+    const dd = String(val.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  const s = String(val);
+
+  // ISO or YYYY-MM-DD...
+  if (s.length >= 10 && s[4] === "-" && s[7] === "-") return s.slice(0, 10);
+
+  // fallback parse
+  const d = new Date(val);
+  if (!Number.isNaN(d.getTime())) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  return null;
+}
+
+function startOfWeekSaturday(date) {
+  const d = new Date(date);
+  const day = d.getDay(); // 0 Sun..6 Sat
+  const diff = (day + 1) % 7;
+  d.setDate(d.getDate() - diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(date, n) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function toYYYYMMDD(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function todayKey() {
+  return toYYYYMMDD(startOfWeekSaturday(new Date()).getTime()
+    ? (() => {
+        const t = new Date();
+        t.setHours(0, 0, 0, 0);
+        return t;
+      })()
+    : new Date());
+}
+
+function isPastDay(dateKeyStr) {
+  if (!dateKeyStr) return true;
+  const t = new Date();
+  t.setHours(0, 0, 0, 0);
+  const d = new Date(`${dateKeyStr}T00:00:00`);
+  return d < t;
+}
+
+function isWithinEditableWeeks(shiftDateKey, weeksAhead) {
+  const d = new Date(`${shiftDateKey}T00:00:00`);
+  const shiftWeekStart = startOfWeekSaturday(d);
+
+  const currentWeekStart = startOfWeekSaturday(new Date());
+  const lastAllowedWeekStart = addDays(currentWeekStart, 7 * weeksAhead);
+
+  return shiftWeekStart >= currentWeekStart && shiftWeekStart <= lastAllowedWeekStart;
+}
+
+async function getWeekForDate(store_id, shift_date) {
+  const key = toDateKey(shift_date);
+  if (!key) return null;
+
+  const day = new Date(`${key}T00:00:00`);
+  const weekStart = startOfWeekSaturday(day);
+
+  return db("schedule_weeks")
+    .where({ store_id, week_start_date: toYYYYMMDD(weekStart) })
+    .first();
+}
+
+async function isDeptAllowedForUser(store_id, user_id, department_id) {
+  const row = await db("user_assignments")
+    .where({ store_id, user_id, department_id })
+    .whereNull("end_date")
+    .first();
+  return Boolean(row);
+}
+
+// ---------------- GET /api/shifts ----------------
 exports.list = async (req, res, next) => {
-    try {
-        const { store_id, department_id, date } = req.query;
-        let q = db("shifts as s")
-            .select(
-                "s.id",
-                "s.store_id",
-                "s.department_id",
-                "s.shift_date",
-                "s.start_time",
-                "s.end_time",
-                "s.status"
-            )
-            .orderBy("s.shift_date", "asc")
-            .orderBy("s.start_time", "asc");
-        if (store_id) q = q.where("s.store_id", store_id);
-        if (department_id) q = q.where("s.department_id", department_id);
-        if (date) q = q.where("s.shift_date", date);
-        const rows = await q;
-        res.json(rows);
-    } catch (err) {
-        next(err);
+  try {
+    const { store_id, department_id, date, start_date, end_date } = req.query;
+    if (!store_id) return res.status(400).json({ message: "store_id is required" });
+
+    let q = db("shifts as s")
+      .select(
+        "s.id",
+        "s.store_id",
+        "s.department_id",
+        "s.user_id",
+        "s.shift_date",
+        "s.start_time",
+        "s.end_time",
+        "s.status",
+        "s.schedule_week_id"
+      )
+      .where("s.store_id", store_id)
+      .orderBy("s.shift_date", "asc")
+      .orderBy("s.start_time", "asc");
+
+    if (department_id) q = q.andWhere("s.department_id", department_id);
+    if (date) q = q.andWhere("s.shift_date", toDateKey(date));
+    if (start_date && end_date) {
+      q = q.andWhereBetween("s.shift_date", [toDateKey(start_date), toDateKey(end_date)]);
     }
+
+    const rows = await q;
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
 };
 
+// ---------------- POST /api/shifts ----------------
 exports.create = async (req, res, next) => {
-    try {
-        const { store_id, department_id, shift_date, start_time, end_time, status } =
-            req.body;
+  try {
+    const { store_id, department_id, user_id, shift_date, start_time, end_time } = req.body;
 
-        if (!store_id || !department_id || !shift_date || !start_time || !end_time) {
-            return res.status(400).json({ message: "Missing required fields" });
-        }
-
-        const [id] = await db("shifts").insert({
-            store_id,
-            department_id,
-            shift_date,
-            start_time,
-            end_time,
-            status: status || "draft",
-            created_by: req.user.sub,
-        });
-
-        res.status(201).json({ id });
-    } catch (err) {
-        next(err);
+    if (!store_id || !department_id || !shift_date || !start_time || !end_time) {
+      return res.status(400).json({
+        message: "store_id, department_id, shift_date, start_time, end_time are required",
+      });
     }
+
+    const shiftDateKey = toDateKey(shift_date);
+    if (!shiftDateKey) return res.status(400).json({ message: "Invalid shift_date" });
+
+    // no past days
+    if (isPastDay(shiftDateKey)) {
+      return res.status(403).json({ message: "Cannot create shifts for past days." });
+    }
+
+    // only current + next 3 weeks
+    const EDITABLE_WEEKS_AHEAD = 3;
+    if (!isWithinEditableWeeks(shiftDateKey, EDITABLE_WEEKS_AHEAD)) {
+      return res.status(403).json({
+        message: "You can only create shifts for the current week and the next 3 weeks.",
+      });
+    }
+
+    // schedule week -> status
+    const week = await getWeekForDate(store_id, shiftDateKey);
+    if (!week) return res.status(400).json({ message: "No schedule week exists for this date." });
+    if (week.status === "locked") return res.status(403).json({ message: "This week is locked." });
+
+    const forcedStatus = week.status === "published" ? "published" : "draft";
+
+    // user_id optional (unassigned allowed)
+    const parsedUserId = user_id ? Number(user_id) : null;
+
+    // dept restriction only if user is assigned
+    if (parsedUserId) {
+      const ok = await isDeptAllowedForUser(store_id, parsedUserId, Number(department_id));
+      if (!ok) return res.status(403).json({ message: "This associate is not assigned to that department." });
+    }
+
+    const [created] = await db("shifts")
+      .insert({
+        store_id,
+        department_id: Number(department_id),
+        user_id: parsedUserId,
+        shift_date: shiftDateKey,
+        start_time,
+        end_time,
+        status: forcedStatus,
+        created_by: req.user?.sub ?? null,
+        schedule_week_id: week.id, // remove if you don't have this column
+      })
+      .returning([
+        "id",
+        "store_id",
+        "department_id",
+        "user_id",
+        "shift_date",
+        "start_time",
+        "end_time",
+        "status",
+        "schedule_week_id",
+      ]);
+
+    res.status(201).json({ shift: created });
+  } catch (err) {
+    if (String(err?.message || "").toLowerCase().includes("duplicate key value")) {
+      return res.status(400).json({ message: "This associate already has a shift for that date." });
+    }
+    next(err);
+  }
 };
 
-exports.addAssignment = async (req, res, next) => {
-    try {
-        const { shiftId } = req.params;
-        const { user_id, assignment_role_id } = req.body;
+// ---------------- PATCH /api/shifts/:shiftId ----------------
+exports.update = async (req, res, next) => {
+  try {
+    const { shiftId } = req.params;
+    const { department_id, shift_date, start_time, end_time, user_id } = req.body;
 
-        if (!user_id || !assignment_role_id) {
-            return res
-                .status(400)
-                .json({ message: "user_id and assignment_role_id required" });
-        }
+    const current = await db("shifts").where({ id: shiftId }).first();
+    if (!current) return res.status(404).json({ message: "Shift not found" });
 
-        const [id] = await db("shift_assignments").insert({
-            shift_id: shiftId,
-            user_id,
-            assignment_role_id,
-        });
+    const effectiveDateKey = toDateKey(shift_date !== undefined ? shift_date : current.shift_date);
+    if (!effectiveDateKey) return res.status(400).json({ message: "Invalid shift_date" });
 
-        res.status(201).json({ id });
-    } catch (err) {
-        res.status(400).json({ message: "Could not add assignment" });
+    const effectiveUserId = user_id !== undefined ? (user_id ? Number(user_id) : null) : current.user_id;
+    const effectiveDeptId =
+      department_id !== undefined ? (department_id ? Number(department_id) : null) : current.department_id;
+
+    // no past days
+    if (isPastDay(effectiveDateKey)) {
+      return res.status(403).json({ message: "Cannot edit shifts for past days." });
     }
+
+    // only current + next 3 weeks
+    const EDITABLE_WEEKS_AHEAD = 3;
+    if (!isWithinEditableWeeks(effectiveDateKey, EDITABLE_WEEKS_AHEAD)) {
+      return res.status(403).json({
+        message: "You can only edit shifts for the current week and the next 3 weeks.",
+      });
+    }
+
+    // schedule week -> status
+    const week = await getWeekForDate(current.store_id, effectiveDateKey);
+    if (!week) return res.status(400).json({ message: "No schedule week exists for this date." });
+    if (week.status === "locked") return res.status(403).json({ message: "This week is locked." });
+
+    const forcedStatus = week.status === "published" ? "published" : "draft";
+
+    // dept restriction only if assigned
+    if (effectiveUserId && effectiveDeptId) {
+      const ok = await isDeptAllowedForUser(current.store_id, effectiveUserId, effectiveDeptId);
+      if (!ok) return res.status(403).json({ message: "This associate is not assigned to that department." });
+    }
+
+    const patch = {};
+    if (department_id !== undefined) patch.department_id = effectiveDeptId;
+    if (shift_date !== undefined) patch.shift_date = effectiveDateKey;
+    if (start_time !== undefined) patch.start_time = start_time;
+    if (end_time !== undefined) patch.end_time = end_time;
+    if (user_id !== undefined) patch.user_id = effectiveUserId;
+
+    // forced status from week
+    patch.status = forcedStatus;
+    patch.schedule_week_id = week.id; // remove if you don't have this column
+
+    const [updated] = await db("shifts")
+      .where({ id: shiftId })
+      .update({ ...patch, updated_at: db.fn.now() })
+      .returning([
+        "id",
+        "store_id",
+        "department_id",
+        "user_id",
+        "shift_date",
+        "start_time",
+        "end_time",
+        "status",
+        "schedule_week_id",
+      ]);
+
+    res.json({ shift: updated });
+  } catch (err) {
+    if (String(err?.message || "").toLowerCase().includes("duplicate key value")) {
+      return res.status(400).json({ message: "This associate already has a shift for that date." });
+    }
+    next(err);
+  }
 };
 
-exports.removeAssignment = async (req, res, next) => {
-    try {
-        const { assignmentId } = req.params;
+// ---------------- DELETE /api/shifts/:shiftId ----------------
+exports.remove = async (req, res, next) => {
+  try {
+    const { shiftId } = req.params;
 
-        const count = await db("shift_assignments").where({ id: assignmentId }).del();
-        if (!count) return res.status(404).json({ message: "Assignment not found" });
+    const shift = await db("shifts").where({ id: shiftId }).first();
+    if (!shift) return res.status(404).json({ message: "Shift not found" });
 
-        res.json({ message: "Removed" });
-    } catch (err) {
-        next(err);
+    const shiftDateKey = toDateKey(shift.shift_date);
+    if (!shiftDateKey) return res.status(400).json({ message: "Invalid shift_date on shift" });
+
+    // no past days
+    if (isPastDay(shiftDateKey)) {
+      return res.status(403).json({ message: "Cannot delete shifts for past days." });
     }
+
+    // only current + next 3 weeks
+    const EDITABLE_WEEKS_AHEAD = 3;
+    if (!isWithinEditableWeeks(shiftDateKey, EDITABLE_WEEKS_AHEAD)) {
+      return res.status(403).json({
+        message: "You can only delete shifts for the current week and the next 3 weeks.",
+      });
+    }
+
+    // locked week block
+    const week = await getWeekForDate(shift.store_id, shiftDateKey);
+    if (!week) return res.status(400).json({ message: "No schedule week exists for this date." });
+    if (week.status === "locked") return res.status(403).json({ message: "This week is locked." });
+
+    await db("shifts").where({ id: shiftId }).del();
+    res.json({ message: "Shift deleted" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Legacy routes kept so your shifts.routes.js won't crash (Option A doesn't use these)
+exports.addAssignment = async (req, res) => {
+  return res.status(400).json({ message: "Not supported (Option A: one shift = one associate)." });
+};
+exports.removeAssignment = async (req, res) => {
+  return res.status(400).json({ message: "Not supported (Option A: one shift = one associate)." });
 };

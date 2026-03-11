@@ -8,6 +8,10 @@ router.get("/", shiftsController.list);
 
 router.post("/", shiftsController.create);
 
+router.patch("/:shiftId", shiftsController.update);
+
+router.delete("/:shiftId", shiftsController.remove);
+
 router.post("/:shiftId/assignments", shiftsController.addAssignment);
 
 router.delete("/:shiftId/assignments/:assignmentId", shiftsController.removeAssignment);

@@ -10,7 +10,7 @@ const corsOptions =
         ? {}
         : {
             origin(origin, cb) {
-                if (!origin) return cb(null, true); 
+                if (!origin) return cb(null, true);
                 if (allowedOrigins.includes(origin)) return cb(null, true);
                 return cb(new Error("Not allowed by CORS"));
             },

@@ -32,7 +32,41 @@ exports.login = async (req, res, next) => {
             },
         });
     } catch (err) {
-        console.log(err)
+        next(err);
+    }
+};
+
+
+
+exports.me = async (req, res, next) => {
+    try {
+        const userId = req.user.sub;
+
+        const user = await db("users as u")
+            .select("u.id", "u.first_name", "u.last_name", "u.email", "u.status")
+            .where("u.id", userId)
+            .first();
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        const assignment = await db("user_assignments as ua")
+            .join("roles as r", "r.id", "ua.role_id")
+            .select("ua.store_id", "ua.department_id", "ua.role_id", "r.code as role_code")
+            .where("ua.user_id", userId)
+            .whereNull("ua.end_date")
+            .orderBy("ua.start_date", "desc")
+            .first();
+
+        return res.json({
+            user: {
+                ...user,
+                store_id: assignment?.store_id || null,
+                department_id: assignment?.department_id || null,
+                role_id: assignment?.role_id || null,
+                role_code: assignment?.role_code || null,
+            },
+        });
+    } catch (err) {
         next(err);
     }
 };
