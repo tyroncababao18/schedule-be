@@ -1,3 +1,5 @@
+// db/seeds/08_requests.js
+
 function startOfWeekSaturday(date) {
   const d = new Date(date);
   const day = d.getDay();
@@ -6,12 +8,14 @@ function startOfWeekSaturday(date) {
   d.setHours(0, 0, 0, 0);
   return d;
 }
+
 function addDays(date, n) {
   const d = new Date(date);
   d.setDate(d.getDate() + n);
   d.setHours(0, 0, 0, 0);
   return d;
 }
+
 function toYYYYMMDD(d) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -19,87 +23,195 @@ function toYYYYMMDD(d) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+// deterministic RNG so you always get same data
+function makeRng(seed = 12345) {
+  let s = seed >>> 0;
+  return function rnd() {
+    s = (1664525 * s + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+function pick(arr, rnd) {
+  return arr[Math.floor(rnd() * arr.length)];
+}
+
+function pickWeighted(items, rnd) {
+  // items: [{value, w}]
+  const total = items.reduce((s, x) => s + x.w, 0);
+  let r = rnd() * total;
+  for (const it of items) {
+    r -= it.w;
+    if (r <= 0) return it.value;
+  }
+  return items[items.length - 1].value;
+}
+
 exports.seed = async function (knex) {
-  // ---------- TIME OFF REQUESTS ----------
-  const hasTimeOff = await knex.schema.hasTable("time_off_requests");
-  if (hasTimeOff) {
-    const hasStartDate = await knex.schema.hasColumn("time_off_requests", "start_date");
-    const hasEndDate = await knex.schema.hasColumn("time_off_requests", "end_date");
-    const hasStartTime = await knex.schema.hasColumn("time_off_requests", "start_time");
-    const hasEndTime = await knex.schema.hasColumn("time_off_requests", "end_time");
-    const hasReason = await knex.schema.hasColumn("time_off_requests", "reason");
-    const hasStatus = await knex.schema.hasColumn("time_off_requests", "status");
-    const hasReviewedBy = await knex.schema.hasColumn("time_off_requests", "reviewed_by");
-    const hasReviewedAt = await knex.schema.hasColumn("time_off_requests", "reviewed_at");
+  const rnd = makeRng(20260313);
 
-    const associates = await knex("users")
-      .select("id")
-      .where("email", "like", "associate%@company.com")
-      .andWhere({ status: "active" })
-      .limit(20);
+  const admin = await knex("users").first("id").where({ email: "admin@company.com" });
+  if (!admin) throw new Error("08_requests: admin@company.com not found");
 
-    if (associates.length) {
-      const baseWeek = startOfWeekSaturday(new Date());
-      const rows = associates.slice(0, 12).map((u, idx) => {
-        const day = addDays(baseWeek, 2 + (idx % 10)); // upcoming days
-        const row = { user_id: u.id };
+  const hr = await knex("users")
+    .select("id")
+    .where("email", "like", "hr%@company.com")
+    .limit(2);
 
-        if (hasStartDate) row.start_date = toYYYYMMDD(day);
-        if (hasEndDate) row.end_date = toYYYYMMDD(day);
+  const reviewers = [admin.id, ...(hr.map((x) => x.id))];
 
-        if (hasStartTime) row.start_time = "09:00";
-        if (hasEndTime) row.end_time = "17:00";
+  const associates = await knex("users")
+    .select("id")
+    .where("email", "like", "associate%@company.com")
+    .andWhere({ status: "active" });
 
-        if (hasReason) row.reason = idx % 2 ? "Family event" : "Doctor appointment";
-        if (hasStatus) row.status = "pending";
+  if (!associates.length) throw new Error("08_requests: no active associates found");
 
-        if (hasReviewedBy) row.reviewed_by = null;
-        if (hasReviewedAt) row.reviewed_at = knex.fn.now();
+  // -----------------------
+  // TIME OFF REQUESTS (BIG)
+  // -----------------------
+  const reasons = [
+    "Doctor appointment",
+    "Family event",
+    "School meeting",
+    "Religious holiday",
+    "Vacation",
+    "Car issue",
+    "Sick day",
+    "Personal matter",
+    "Travel",
+    "Childcare",
+  ];
 
-        return row;
-      });
+  const timeOffRows = [];
+  const base = startOfWeekSaturday(new Date());
 
-      // Avoid empty insert
-      if (rows.length) {
-        await knex("time_off_requests").insert(rows);
-        console.log(`08_requests_optional: Inserted ${rows.length} time_off_requests`);
-      }
+  const TIME_OFF_COUNT = 120;
+
+  for (let i = 0; i < TIME_OFF_COUNT; i++) {
+    const user = pick(associates, rnd).id;
+
+    // spread requests across a range: some past, mostly future
+    const dayOffset = Math.floor(rnd() * 60) - 10; // [-10..49]
+    const start = addDays(base, dayOffset);
+
+    // 1–3 day ranges
+    const lengthDays = pickWeighted(
+      [
+        { value: 1, w: 0.65 },
+        { value: 2, w: 0.25 },
+        { value: 3, w: 0.10 },
+      ],
+      rnd
+    );
+    const end = addDays(start, lengthDays - 1);
+
+    const status = pickWeighted(
+      [
+        { value: "pending", w: 0.55 },
+        { value: "approved", w: 0.30 },
+        { value: "denied", w: 0.15 },
+      ],
+      rnd
+    );
+
+    const row = {
+      user_id: user,
+      start_date: toYYYYMMDD(start),
+      end_date: toYYYYMMDD(end),
+      start_time: rnd() < 0.45 ? "09:00" : null,
+      end_time: rnd() < 0.45 ? "17:00" : null,
+      reason: pick(reasons, rnd),
+      status,
+      reviewed_by: null,
+      reviewed_at: null,
+      created_at: knex.fn.now(),
+      updated_at: knex.fn.now(),
+    };
+
+    if (status !== "pending") {
+      row.reviewed_by = pick(reviewers, rnd);
+      row.reviewed_at = knex.fn.now();
     }
+
+    timeOffRows.push(row);
   }
 
-  // ---------- SHIFT SWAP REQUESTS ----------
-  const hasSwap = await knex.schema.hasTable("shift_swap_requests");
-  if (hasSwap) {
-    const hasRequesterId = await knex.schema.hasColumn("shift_swap_requests", "requester_id");
-    const hasShiftId = await knex.schema.hasColumn("shift_swap_requests", "shift_id");
-    const hasStatus = await knex.schema.hasColumn("shift_swap_requests", "status");
-    const hasNotes = await knex.schema.hasColumn("shift_swap_requests", "notes");
-    const hasCreatedAt = await knex.schema.hasColumn("shift_swap_requests", "created_at");
+  await knex("time_off_requests").insert(timeOffRows);
+  console.log(`08_requests: Inserted ${timeOffRows.length} time_off_requests`);
 
-    const someShifts = await knex("shifts")
-      .select("id", "user_id")
-      .whereNotNull("user_id")
-      .limit(12);
+  // ------------------------
+  // SHIFT SWAP REQUESTS (BIG)
+  // unique(["shift_id"]) => pick unique shifts
+  // ------------------------
+  const shifts = await knex("shifts")
+    .select("id", "user_id", "store_id", "shift_date")
+    .whereNotNull("user_id");
 
-    const rows = someShifts
-      .filter((s) => s.user_id)
-      .map((s, idx) => {
-        const row = {};
-        if (hasRequesterId) row.requester_id = s.user_id;
-        if (hasShiftId) row.shift_id = s.id;
-        if (hasStatus) row.status = "pending";
-        if (hasNotes) row.notes = idx % 2 ? "Swap requested" : "Need coverage";
-        if (hasCreatedAt) row.created_at = knex.fn.now();
-        return row;
-      });
-
-    const canInsert =
-      (!hasRequesterId || rows.every((r) => "requester_id" in r)) &&
-      (!hasShiftId || rows.every((r) => "shift_id" in r));
-
-    if (rows.length && canInsert) {
-      await knex("shift_swap_requests").insert(rows);
-      console.log(`08_requests_optional: Inserted ${rows.length} shift_swap_requests`);
-    }
+  if (!shifts.length) {
+    console.log("08_requests: No assigned shifts found. Skipping swap requests.");
+    return;
   }
+
+  const swapNotes = [
+    "Need coverage",
+    "Swap requested",
+    "Schedule conflict",
+    "Doctor appointment same day",
+    "School pickup",
+    "Family emergency",
+    "Car trouble",
+    "Can swap for another day",
+    "Prefer morning shift",
+    "Prefer closing shift",
+  ];
+
+  const SWAP_COUNT = Math.min(60, shifts.length); // can't exceed shifts due to unique(shift_id)
+
+  // pick unique shifts
+  const usedShiftIds = new Set();
+  const swapRows = [];
+
+  while (swapRows.length < SWAP_COUNT) {
+    const s = pick(shifts, rnd);
+    if (usedShiftIds.has(s.id)) continue;
+    usedShiftIds.add(s.id);
+
+    const requester_id = s.user_id;
+
+    // optional acceptor_id sometimes
+    const acceptor_id = rnd() < 0.35 ? pick(associates, rnd).id : null;
+
+    const status = pickWeighted(
+      [
+        { value: "pending", w: 0.55 },
+        { value: "approved", w: 0.20 },
+        { value: "denied", w: 0.15 },
+        { value: "canceled", w: 0.10 },
+      ],
+      rnd
+    );
+
+    const row = {
+      requester_id,
+      shift_id: s.id,
+      acceptor_id,
+      status,
+      notes: pick(swapNotes, rnd),
+      reviewed_by: null,
+      reviewed_at: null,
+      created_at: knex.fn.now(),
+      updated_at: knex.fn.now(),
+    };
+
+    if (status === "approved" || status === "denied") {
+      row.reviewed_by = pick(reviewers, rnd);
+      row.reviewed_at = knex.fn.now();
+    }
+
+    swapRows.push(row);
+  }
+
+  await knex("shift_swap_requests").insert(swapRows);
+  console.log(`08_requests: Inserted ${swapRows.length} shift_swap_requests`);
 };

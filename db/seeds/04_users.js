@@ -1,7 +1,8 @@
+const bcrypt = require("bcrypt");
+
 exports.seed = async function (knex) {
-  // bcrypt hash for "Password123!"
-  const PASSWORD_HASH =
-    "$2b$10$k8p7m3mVt1T8r7Zbqg6lLe1d8bWqj1m2oZcFzKkq3wYl5p4nFq6q2";
+  const PASSWORD = "Password123!";
+  const PASSWORD_HASH = await bcrypt.hash(PASSWORD, 10); // same rounds you use in auth
 
   const users = [];
 

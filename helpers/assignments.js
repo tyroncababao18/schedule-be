@@ -10,4 +10,5 @@ async function getAllowedDepartmentIds({ store_id, user_id }) {
   return new Set(rows.map((r) => r.department_id));
 }
 
+
 module.exports = { getAllowedDepartmentIds };

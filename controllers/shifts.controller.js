@@ -64,10 +64,10 @@ function toYYYYMMDD(d) {
 function todayKey() {
   return toYYYYMMDD(startOfWeekSaturday(new Date()).getTime()
     ? (() => {
-        const t = new Date();
-        t.setHours(0, 0, 0, 0);
-        return t;
-      })()
+      const t = new Date();
+      t.setHours(0, 0, 0, 0);
+      return t;
+    })()
     : new Date());
 }
 
@@ -333,10 +333,3 @@ exports.remove = async (req, res, next) => {
   }
 };
 
-// Legacy routes kept so your shifts.routes.js won't crash (Option A doesn't use these)
-exports.addAssignment = async (req, res) => {
-  return res.status(400).json({ message: "Not supported (Option A: one shift = one associate)." });
-};
-exports.removeAssignment = async (req, res) => {
-  return res.status(400).json({ message: "Not supported (Option A: one shift = one associate)." });
-};

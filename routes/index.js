@@ -9,6 +9,9 @@ router.use("/departments", require("./departments.routes"))
 router.use("/schedule", require("./schedule.routes"))
 router.use("/user-assignments", require("./userAssignments.routes"));
 router.use("/schedule-weeks", require("./scheduleWeeks.routes"));
+router.use("/time-off", require("./timeOff.routes"));
+router.use("/swaps", require("./swaps.routes"));
+router.use("/requests", require("./requests.routes"));
 
 
 module.exports = router;
