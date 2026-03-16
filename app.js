@@ -6,8 +6,13 @@ const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
-app.get("/health", (req, res) => res.json({ ok: true }));
+app.get("/", (req, res) => {
+    res.json({ ok: true, service: "schedule-be", version: "1.0.0" });
+});
 
+app.get("/health", (req, res) => {
+    res.json({ ok: true });
+});
 
 setupMiddleware(app);
 
