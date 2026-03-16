@@ -1,19 +1,8 @@
-// controllers/shifts.controller.js
 const db = require("../db/knex");
-
-/**
- * Rules:
- * - Shift.status is ALWAYS forced from schedule_weeks (draft/published). Frontend must not set it.
- * - No edits/creates/deletes for past days.
- * - Allowed window: current week + next 3 weeks (offset 0..3). Change EDITABLE_WEEKS_AHEAD if needed.
- * - Department must be allowed for the shift's user based on user_assignments (unless user_id is null/unassigned).
- * - Option A: one shift = one associate (shifts.user_id).
- */
 
 function toDateKey(val) {
   if (!val) return null;
 
-  // Date object from PG
   if (val instanceof Date) {
     const yyyy = val.getFullYear();
     const mm = String(val.getMonth() + 1).padStart(2, "0");
@@ -23,10 +12,8 @@ function toDateKey(val) {
 
   const s = String(val);
 
-  // ISO or YYYY-MM-DD...
   if (s.length >= 10 && s[4] === "-" && s[7] === "-") return s.slice(0, 10);
 
-  // fallback parse
   const d = new Date(val);
   if (!Number.isNaN(d.getTime())) {
     const yyyy = d.getFullYear();
@@ -40,7 +27,7 @@ function toDateKey(val) {
 
 function startOfWeekSaturday(date) {
   const d = new Date(date);
-  const day = d.getDay(); // 0 Sun..6 Sat
+  const day = d.getDay();
   const diff = (day + 1) % 7;
   d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
@@ -61,15 +48,6 @@ function toYYYYMMDD(d) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function todayKey() {
-  return toYYYYMMDD(startOfWeekSaturday(new Date()).getTime()
-    ? (() => {
-      const t = new Date();
-      t.setHours(0, 0, 0, 0);
-      return t;
-    })()
-    : new Date());
-}
 
 function isPastDay(dateKeyStr) {
   if (!dateKeyStr) return true;
@@ -109,7 +87,6 @@ async function isDeptAllowedForUser(store_id, user_id, department_id) {
   return Boolean(row);
 }
 
-// ---------------- GET /api/shifts ----------------
 exports.list = async (req, res, next) => {
   try {
     const { store_id, department_id, date, start_date, end_date } = req.query;
@@ -144,7 +121,6 @@ exports.list = async (req, res, next) => {
   }
 };
 
-// ---------------- POST /api/shifts ----------------
 exports.create = async (req, res, next) => {
   try {
     const { store_id, department_id, user_id, shift_date, start_time, end_time } = req.body;
@@ -178,7 +154,6 @@ exports.create = async (req, res, next) => {
 
     const forcedStatus = week.status === "published" ? "published" : "draft";
 
-    // user_id optional (unassigned allowed)
     const parsedUserId = user_id ? Number(user_id) : null;
 
     // dept restriction only if user is assigned
@@ -197,7 +172,7 @@ exports.create = async (req, res, next) => {
         end_time,
         status: forcedStatus,
         created_by: req.user?.sub ?? null,
-        schedule_week_id: week.id, // remove if you don't have this column
+        schedule_week_id: week.id,
       })
       .returning([
         "id",
@@ -220,7 +195,6 @@ exports.create = async (req, res, next) => {
   }
 };
 
-// ---------------- PATCH /api/shifts/:shiftId ----------------
 exports.update = async (req, res, next) => {
   try {
     const { shiftId } = req.params;
@@ -271,7 +245,7 @@ exports.update = async (req, res, next) => {
 
     // forced status from week
     patch.status = forcedStatus;
-    patch.schedule_week_id = week.id; // remove if you don't have this column
+    patch.schedule_week_id = week.id;
 
     const [updated] = await db("shifts")
       .where({ id: shiftId })
@@ -297,7 +271,6 @@ exports.update = async (req, res, next) => {
   }
 };
 
-// ---------------- DELETE /api/shifts/:shiftId ----------------
 exports.remove = async (req, res, next) => {
   try {
     const { shiftId } = req.params;
@@ -333,3 +306,92 @@ exports.remove = async (req, res, next) => {
   }
 };
 
+
+
+function toMinutes(hhmm) {
+  const [h, m] = String(hhmm).slice(0, 5).split(":").map(Number);
+  return h * 60 + m;
+}
+
+// Overlap: next.start < prev.end
+function countOverlaps(shifts) {
+  // group by user_id + shift_date
+  const groups = new Map();
+
+  for (const s of shifts) {
+    if (!s.user_id) continue; // ignore unassigned
+    const dateKey = toDateKey(s.shift_date);
+    if (!dateKey) continue;
+    const key = `${s.user_id}__${dateKey}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+
+  let conflictCount = 0;
+  const conflicts = [];
+
+  for (const [key, list] of groups.entries()) {
+    // sort by start_time
+    list.sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
+
+    for (let i = 1; i < list.length; i++) {
+      const prev = list[i - 1];
+      const cur = list[i];
+
+      const prevStart = toMinutes(prev.start_time);
+      const prevEnd = toMinutes(prev.end_time);
+      const curStart = toMinutes(cur.start_time);
+      const curEnd = toMinutes(cur.end_time);
+
+      const overlap = curStart < prevEnd;
+
+      if (overlap) {
+        conflictCount += 1;
+        conflicts.push({
+          user_id: prev.user_id,
+          shift_date: toDateKey(prev.shift_date),
+          a: { id: prev.id, start_time: prev.start_time, end_time: prev.end_time },
+          b: { id: cur.id, start_time: cur.start_time, end_time: cur.end_time },
+        });
+      }
+    }
+  }
+
+  return { conflictCount, conflicts };
+}
+
+exports.conflicts = async (req, res, next) => {
+  try {
+    const { store_id, start_date, end_date } = req.query;
+    const role = req.user.role_code;
+    const userId = req.user.sub;
+
+    if (!start_date || !end_date) {
+      return res.status(400).json({ message: "start_date and end_date are required" });
+    }
+
+    const isAssociate = role === "ASSOCIATE";
+
+    let q = db("shifts as s")
+      .select("s.id", "s.user_id", "s.shift_date", "s.start_time", "s.end_time")
+      .whereBetween("s.shift_date", [toDateKey(start_date), toDateKey(end_date)]);
+
+    if (isAssociate) {
+      q = q.where("s.user_id", userId);
+    } else {
+      if (!store_id) return res.status(400).json({ message: "store_id is required" });
+      q = q.where("s.store_id", store_id);
+    }
+
+    const rows = await q;
+
+    const { conflictCount, conflicts } = countOverlaps(rows);
+
+    res.json({
+      count: conflictCount,
+      conflicts: conflicts.slice(0, 50),
+    });
+  } catch (err) {
+    next(err);
+  }
+};
