@@ -36,8 +36,8 @@ Handles authentication, schedule weeks, shifts, request workflows (time off + sw
 
 Highlights:
 - `schedule_weeks` controls week status (**published/draft/locked**) + hour budget
-- `user_assignments` defines active store/department/role (active row = `end_date IS NULL`)
-- `shifts` uses Option A: **one shift = one associate** (no multi-assignment)
+- `user_assignments` defines active store/department/role
+- `shifts`  **one shift = one associate**
 
 ---
 
