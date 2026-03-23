@@ -9,12 +9,9 @@ Handles authentication, schedule weeks, shifts, request workflows (time off + sw
 
 ---
 
-## Live API
+## Live FrontEnd Demo
 
-https://schedule-be-1mws.onrender.com
-
-Frontend:
-https://schedule-fe-jmpv.onrender.com
+🔗 [Schedule](https://schedule-fe-jmpv.onrender.com)
 
 ---
 
