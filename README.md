@@ -1,7 +1,6 @@
 
 ---
 
-```md
 # Retail Scheduling App — Backend API
 
 Node/Express API for a retail scheduling system with role-based access control.  
