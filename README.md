@@ -114,7 +114,7 @@ Conflicts:
 ### 1) Install
 ```bash
 npm install
-
+```
 
 ## Demo Accounts (Seeded)
 
