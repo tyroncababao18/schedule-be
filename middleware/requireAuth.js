@@ -13,6 +13,7 @@ module.exports = function requireAuth(req, res, next) {
       email: decoded.email,
       store_id: decoded.store_id,
       role_code: decoded.role_code,
+      demo: decoded.demo === true,
     };
 
     next();

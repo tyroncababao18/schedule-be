@@ -76,6 +76,7 @@ exports.me = async (req, res, next) => {
         department_id: assignment?.department_id || null,
         role_id: assignment?.role_id || null,
         role_code: assignment?.role_code || null,
+        is_demo: req.user.demo === true,
       },
     });
   } catch (err) {
