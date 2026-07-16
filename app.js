@@ -7,7 +7,7 @@ const errorHandler = require("./middleware/errorHandler");
 const app = express();
 
 app.get("/", (req, res) => {
-    res.json({ ok: true, service: "schedule-be", version: "1.0.0" });
+    res.json({ ok: true, service: "schedule", version: "1.0.0" });
 });
 
 app.get("/health", (req, res) => {

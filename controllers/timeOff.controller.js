@@ -40,7 +40,6 @@ exports.list = async (req, res, next) => {
         const rows = await q;
         res.json(rows);
     } catch (err) {
-        console.log(err)
         next(err);
     }
 };

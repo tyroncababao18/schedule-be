@@ -8,6 +8,8 @@ function pickMany(arr, count, rnd) {
   return out;
 }
 
+
+
 function makeRng(seed = 12345) {
   let s = seed >>> 0;
   return function rnd() {
@@ -17,6 +19,8 @@ function makeRng(seed = 12345) {
 }
 
 exports.seed = async function (knex) {
+  await knex("user_assignments").del();
+
   const rnd = makeRng(20260312);
 
   const store = await knex("stores").first("id").orderBy("id", "asc");
@@ -46,11 +50,19 @@ exports.seed = async function (knex) {
   }
 
   // Identify by email pattern
+  const demo = users.find((u) => u.email === "demo@company.com");
   const admin = users.find((u) => u.email === "admin@company.com");
   const hrUsers = users.filter((u) => u.email.startsWith("hr"));
   const coaches = users.filter((u) => u.email.startsWith("coach"));
   const leads = users.filter((u) => u.email.startsWith("lead"));
   const associates = users.filter((u) => u.email.startsWith("associate"));
+
+  // Demo: full access to all departments
+  if (!demo) {
+    throw new Error("Demo user was not found. Run the users seed first.");
+  }
+
+  assignUserToDepts(demo.id, "ADMIN", deptIds);
 
   // Admin: all depts
   assignUserToDepts(admin.id, "ADMIN", deptIds);

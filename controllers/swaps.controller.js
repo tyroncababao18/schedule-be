@@ -3,10 +3,8 @@ const db = require("../db/knex");
 exports.list = async (req, res, next) => {
   try {
     const { store_id, status = "pending" } = req.query;
-    console.log(req.user)
     const role = req.user.role_code;
     const userId = req.user.sub;
-    console.log("wefrw")
 
     let q = db("shift_swap_requests as r")
       .select(
@@ -28,7 +26,6 @@ exports.list = async (req, res, next) => {
       .orderBy("r.created_at", "desc");
 
     if (status) q = q.where("r.status", status);
-    console.log(role)
     if (role === "ASSOCIATE") {
       q = q.andWhere("r.requester_id", req.user.sub);
     } else {
@@ -39,7 +36,6 @@ exports.list = async (req, res, next) => {
     const rows = await q;
     res.json(rows);
   } catch (err) {
-    console.log(err)
     next(err);
   }
 };

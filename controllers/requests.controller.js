@@ -115,7 +115,6 @@ exports.summary = async (req, res, next) => {
 
         res.json({ timeOffPending, swapPending, latest });
     } catch (err) {
-        console.log(err)
         next(err);
     }
 };

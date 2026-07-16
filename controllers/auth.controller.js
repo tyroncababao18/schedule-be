@@ -82,3 +82,53 @@ exports.me = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.demo = async (req, res, next) => {
+
+  try {
+    const demoUser = await db("users")
+      .where({ email: "demo@company.com" })
+      .first();
+
+    if (!demoUser) {
+      return res.status(404).json({
+        message: "Demo account was not found.",
+      });
+    }
+
+    const context = await getUserContext(demoUser.id);
+
+    if (!context) {
+      return res.status(403).json({
+        message: "Demo account does not have an active assignment.",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        sub: demoUser.id,
+        email: demoUser.email,
+        store_id: context.store_id,
+        role_code: context.role_code,
+        demo: true,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "2h" }
+    );
+
+    return res.json({
+      token,
+      user: {
+        id: demoUser.id,
+        first_name: demoUser.first_name,
+        last_name: demoUser.last_name,
+        email: demoUser.email,
+        store_id: context.store_id,
+        role_code: context.role_code,
+        is_demo: true,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};

@@ -6,6 +6,18 @@ exports.seed = async function (knex) {
 
   const users = [];
 
+
+  const demoPasswordHash = await bcrypt.hash("Demo123!", 10);
+
+  // DEMO
+  users.push({
+    first_name: "Demo",
+    last_name: "Manager",
+    email: "demo@company.com",
+    password_hash: demoPasswordHash,
+    status: "active",
+  });
+
   // 1 Admin
   users.push({
     first_name: "Alex",
