@@ -1,17 +1,6 @@
-function pickMany(arr, count, rnd) {
-  const copy = [...arr];
-  const out = [];
-  while (out.length < count && copy.length) {
-    const idx = Math.floor(rnd() * copy.length);
-    out.push(copy.splice(idx, 1)[0]);
-  }
-  return out;
-}
-
-
-
 function makeRng(seed = 12345) {
   let s = seed >>> 0;
+
   return function rnd() {
     s = (1664525 * s + 1013904223) >>> 0;
     return s / 4294967296;
@@ -21,79 +10,170 @@ function makeRng(seed = 12345) {
 exports.seed = async function (knex) {
   await knex("user_assignments").del();
 
-  const rnd = makeRng(20260312);
+  const rnd = makeRng(20261002);
 
-  const store = await knex("stores").first("id").orderBy("id", "asc");
+  const store = await knex("stores")
+    .first("id")
+    .orderBy("id", "asc");
+
+  if (!store) {
+    throw new Error("No store found.");
+  }
+
   const store_id = store.id;
 
-  const roles = await knex("roles").select("id", "code");
-  const roleId = new Map(roles.map((r) => [r.code, r.id]));
+  const roles = await knex("roles")
+    .select("id", "code");
 
-  const departments = await knex("departments").select("id", "name").where({ store_id });
-  const deptIds = departments.map((d) => d.id);
+  const roleId = new Map(
+    roles.map((role) => [role.code, role.id])
+  );
 
-  const users = await knex("users").select("id", "email").orderBy("id", "asc");
+  const departments = await knex("departments")
+    .select("id", "name")
+    .where({ store_id })
+    .orderBy("id", "asc");
+
+  if (!departments.length) {
+    throw new Error("No departments found.");
+  }
+
+  const deptIds = departments.map((dept) => dept.id);
+
+  const users = await knex("users")
+    .select("id", "email", "status")
+    .orderBy("id", "asc");
 
   const assignments = [];
 
-  function assignUserToDepts(user_id, role_code, dept_list) {
-    for (const department_id of dept_list) {
-      assignments.push({
-        user_id,
-        store_id,
-        department_id,
-        role_id: roleId.get(role_code),
-        start_date: knex.fn.now(),
-        end_date: null,
-      });
+  function assignUser(user_id, role_code, department_id) {
+    assignments.push({
+      user_id,
+      store_id,
+      department_id,
+      role_id: roleId.get(role_code),
+      start_date: knex.fn.now(),
+      end_date: null,
+    });
+  }
+
+  function assignUserToAllDepartments(user_id, role_code) {
+    for (const department of departments) {
+      assignUser(user_id, role_code, department.id);
     }
   }
 
-  // Identify by email pattern
-  const demo = users.find((u) => u.email === "demo@company.com");
-  const admin = users.find((u) => u.email === "admin@company.com");
-  const hrUsers = users.filter((u) => u.email.startsWith("hr"));
-  const coaches = users.filter((u) => u.email.startsWith("coach"));
-  const leads = users.filter((u) => u.email.startsWith("lead"));
-  const associates = users.filter((u) => u.email.startsWith("associate"));
+  // --------------------------------------------------
+  // Find seeded users
+  // --------------------------------------------------
 
-  // Demo: full access to all departments
+  const demo = users.find(
+    (u) => u.email === "demo@company.com"
+  );
+
+  const admin = users.find(
+    (u) => u.email === "admin@company.com"
+  );
+
+  const hrUsers = users.filter((u) =>
+    u.email.startsWith("hr")
+  );
+
+  const coaches = users.filter((u) =>
+    u.email.startsWith("coach")
+  );
+
+  const leads = users.filter((u) =>
+    u.email.startsWith("lead")
+  );
+
+  const associates = users.filter((u) =>
+    u.email.startsWith("associate")
+  );
+
   if (!demo) {
-    throw new Error("Demo user was not found. Run the users seed first.");
+    throw new Error("Demo account not found.");
   }
 
-  assignUserToDepts(demo.id, "ADMIN", deptIds);
-
-  // Admin: all depts
-  assignUserToDepts(admin.id, "ADMIN", deptIds);
-
-  const deptByName = new Map(departments.map((d) => [d.name, d.id]));
-  const coreHR = [
-    deptByName.get("OPD / Fulfillment"),
-    deptByName.get("Front End"),
-    deptByName.get("Receiving"),
-  ].filter(Boolean);
-
-  for (const u of hrUsers) {
-    const extra = pickMany(deptIds.filter((x) => !coreHR.includes(x)), 1, rnd);
-    assignUserToDepts(u.id, "HR", [...coreHR, ...extra]);
+  if (!admin) {
+    throw new Error("Admin account not found.");
   }
 
-  for (let i = 0; i < coaches.length; i++) {
-    const slice = deptIds.filter((_, idx) => idx % coaches.length === i);
-    assignUserToDepts(coaches[i].id, "COACH", slice);
+  // --------------------------------------------------
+  // Demo + Admin
+  // Full access
+  // --------------------------------------------------
+
+  assignUserToAllDepartments(demo.id, "ADMIN");
+  assignUserToAllDepartments(admin.id, "ADMIN");
+
+  // --------------------------------------------------
+  // HR
+  // HR can access all departments
+  // --------------------------------------------------
+
+  for (const hr of hrUsers) {
+    assignUserToAllDepartments(hr.id, "HR");
   }
 
-  for (const u of leads) {
-    const depts = pickMany(deptIds, 3, rnd);
-    assignUserToDepts(u.id, "TEAM_LEAD", depts);
+  // --------------------------------------------------
+  // Coaches
+  // Split departments between coaches
+  // --------------------------------------------------
+
+  for (let i = 0; i < departments.length; i++) {
+    const coach = coaches[i % coaches.length];
+
+    assignUser(
+      coach.id,
+      "COACH",
+      departments[i].id
+    );
   }
 
-  for (const u of associates) {
-    const count = rnd() < 0.35 ? 2 : 1;
-    const depts = pickMany(deptIds, count, rnd);
-    assignUserToDepts(u.id, "ASSOCIATE", depts);
+  // --------------------------------------------------
+  // Team Leads
+  // One primary department per lead
+  // --------------------------------------------------
+
+  for (let i = 0; i < leads.length; i++) {
+    const department =
+      departments[i % departments.length];
+
+    assignUser(
+      leads[i].id,
+      "TEAM_LEAD",
+      department.id
+    );
   }
 
-  await knex("user_assignments").insert(assignments);
+  // --------------------------------------------------
+  // Associates
+  //
+  // Each associate gets ONE department.
+  // --------------------------------------------------
+
+  for (let i = 0; i < associates.length; i++) {
+    const associate = associates[i];
+
+    const department =
+      departments[i % departments.length];
+
+    assignUser(
+      associate.id,
+      "ASSOCIATE",
+      department.id
+    );
+  }
+
+  await knex("user_assignments")
+    .insert(assignments);
+
+  console.log(
+    `Created ${assignments.length} user assignments`
+  );
+
+  console.log(
+    `Assigned ${associates.length} associates across ${departments.length} departments`
+  );
 };

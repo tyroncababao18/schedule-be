@@ -2,23 +2,30 @@ const bcrypt = require("bcrypt");
 
 exports.seed = async function (knex) {
   const PASSWORD = "Password123!";
-  const PASSWORD_HASH = await bcrypt.hash(PASSWORD, 10); // same rounds you use in auth
+  const PASSWORD_HASH = await bcrypt.hash(PASSWORD, 10);
+
+  const DEMO_PASSWORD_HASH = await bcrypt.hash("Demo123!", 10);
+
+  const departments = await knex("departments")
+    .select("id", "name")
+    .orderBy("id", "asc");
+
+  if (!departments.length) {
+    throw new Error("No departments found. Seed departments first.");
+  }
 
   const users = [];
 
-
-  const demoPasswordHash = await bcrypt.hash("Demo123!", 10);
-
-  // DEMO
+  // Demo Admin
   users.push({
     first_name: "Demo",
     last_name: "Manager",
     email: "demo@company.com",
-    password_hash: demoPasswordHash,
+    password_hash: DEMO_PASSWORD_HASH,
     status: "active",
   });
 
-  // 1 Admin
+  // Admin
   users.push({
     first_name: "Alex",
     last_name: "Admin",
@@ -27,7 +34,7 @@ exports.seed = async function (knex) {
     status: "active",
   });
 
-  // 2 HR
+  // HR
   users.push(
     {
       first_name: "Hannah",
@@ -45,7 +52,7 @@ exports.seed = async function (knex) {
     }
   );
 
-  // 2 Coaches
+  // Coaches
   users.push(
     {
       first_name: "Cory",
@@ -60,11 +67,18 @@ exports.seed = async function (knex) {
       email: "coach2@company.com",
       password_hash: PASSWORD_HASH,
       status: "active",
+    },
+    {
+      first_name: "Jordan",
+      last_name: "Coach",
+      email: "coach3@company.com",
+      password_hash: PASSWORD_HASH,
+      status: "active",
     }
   );
 
-  // 4 Team Leads
-  for (let i = 1; i <= 4; i++) {
+  // Team Leads
+  for (let i = 1; i <= Math.max(6, departments.length); i++) {
     users.push({
       first_name: `Taylor${i}`,
       last_name: "Lead",
@@ -74,16 +88,43 @@ exports.seed = async function (knex) {
     });
   }
 
-  // 32 Associates
-  for (let i = 1; i <= 32; i++) {
-    users.push({
-      first_name: `Associate${i}`,
-      last_name: "Demo",
-      email: `associate${i}@company.com`,
-      password_hash: PASSWORD_HASH,
-      status: i % 12 === 0 ? "inactive" : "active",
-    });
+  // --------------------------------------------------
+  // Associates
+  // 10 associates for EVERY department
+  // --------------------------------------------------
+
+  const ASSOCIATES_PER_DEPARTMENT = 10;
+
+  let associateNumber = 1;
+
+  for (const department of departments) {
+    for (let i = 1; i <= ASSOCIATES_PER_DEPARTMENT; i++) {
+      users.push({
+        first_name: `Associate${associateNumber}`,
+        last_name: "Demo",
+        email: `associate${associateNumber}@company.com`,
+        password_hash: PASSWORD_HASH,
+
+        // Make occasional inactive associates
+        status: associateNumber % 19 === 0 ? "inactive" : "active",
+      });
+
+      associateNumber++;
+    }
   }
 
-  await knex("users").insert(users);
+  // Makes the seed rerunnable without duplicate emails
+  await knex("users")
+    .insert(users)
+    .onConflict("email")
+    .merge([
+      "first_name",
+      "last_name",
+      "password_hash",
+      "status",
+    ]);
+
+  console.log(
+    `Seeded ${associateNumber - 1} associates across ${departments.length} departments`
+  );
 };
